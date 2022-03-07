@@ -1,0 +1,128 @@
+name: "Deploy - Terraform"
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "iac/terraform/**"
+  workflow_dispatch:
+
+# Using env secrets is the preferred approach for CI/CD tools. AZ login only works for user accounts and not for service principals.
+env:
+  ARM_CLIENT_ID: "${{ secrets.ARM_CLIENT_ID }}"
+  ARM_CLIENT_SECRET: "${{ secrets.ARM_CLIENT_SECRET }}"
+  ARM_SUBSCRIPTION_ID: "${{ secrets.ARM_SUBSCRIPTION_ID }}"
+  ARM_TENANT_ID: "${{ secrets.ARM_TENANT_ID }}"
+  WORKDIR: "iac/terraform"
+
+# Set defaults for GitHub Actions runner
+defaults:
+  run:
+    working-directory: "iac/terraform"
+
+jobs:
+  preview:
+    name: "Preview Changes"
+    runs-on: ubuntu-latest
+    outputs:
+      tfplan-exitcode: ${{ steps.tfplan.outputs.exitcode }}
+      resources-prefix: ${{ steps.inputdata.outputs.resources-prefix }}
+
+    steps:
+      # Checkout the repository to the GitHub Actions runner
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      # Generate RESOURCES_PREFIX based on the repo name
+      - name: "Get Resources Prefix"
+        run: |
+          RESOURCES_PREFIX=$(echo '${{ toJson(github.repository) }}' | jq -r -c 'split("/")[1]')
+
+          # Set for current Job
+          echo "RESOURCES_PREFIX=${RESOURCES_PREFIX}" >> $GITHUB_ENV
+
+          # Set for next Job
+          echo "::set-output name=resources-prefix::${RESOURCES_PREFIX}"
+        id: inputdata
+
+      # Install the latest version of Terraform CLI
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v1
+
+      # Initialize a new or existing Terraform working directory by creating initial files, loading any remote state, downloading modules, etc.
+      - name: Terraform Init
+        run: terraform init -backend-config=resource_group_name="${{ secrets.TFSTATE_RESOURCES_GROUP_NAME }}" -backend-config=storage_account_name="${{ secrets.TFSTATE_STORAGE_ACCOUNT_NAME }}" -backend-config=container_name="${{ secrets.TFSTATE_STORAGE_CONTAINER_NAME }}" -backend-config=key="${{ secrets.TFSTATE_KEY }}"
+
+      # Generates an execution plan for Terraform
+      # An exit code of 2 indicates there were changes detected and will throw an error. Just continue for now, we'll check next step
+      - name: Terraform Plan
+        run: terraform plan -detailed-exitcode -var="location=${{ secrets.LOCATION }}" -var="resources_prefix=${{ env.RESOURCES_PREFIX }}" || exit 0
+        id: tfplan
+
+  deploy:
+    name: "Deploy"
+    if: needs.preview.outputs.tfplan-exitcode == 2
+    needs: preview
+    runs-on: ubuntu-latest
+    environment: production
+    outputs:
+      hostnames: ${{ steps.tfoutput.outputs.hostnames }}
+
+    steps:
+      # Checkout the repository to the GitHub Actions runner
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      # Login to Azure with Service Principal
+      # This step is not required by Terraform itself, but Terraform code contains resources with "az" commands to execute on agent localy.
+      - name: Azure Login
+        uses: Azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      # Install the latest version of Terraform CLI
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v1
+        with:
+          terraform_wrapper: false
+
+      # Initialize a new or existing Terraform working directory by creating initial files, loading any remote state, downloading modules, etc.
+      - name: Terraform Init
+        run: terraform init -backend-config=resource_group_name="${{ secrets.TFSTATE_RESOURCES_GROUP_NAME }}" -backend-config=storage_account_name="${{ secrets.TFSTATE_STORAGE_ACCOUNT_NAME }}" -backend-config=container_name="${{ secrets.TFSTATE_STORAGE_CONTAINER_NAME }}" -backend-config=key="${{ secrets.TFSTATE_KEY }}"
+
+      # Terraform Apply
+      - name: Terraform Apply
+        run: terraform apply -auto-approve -var="location=${{ secrets.LOCATION }}" -var="resources_prefix=${{ needs.preview.outputs.resources-prefix }}"
+
+      # Terraform Output
+      # Grab TF output values, transform and set as Job output to use for the next Job
+      - name: Terraform Output
+        run: |
+          deployment_output=$(terraform output -json)
+          hostnames=$(echo "${deployment_output}" | jq -r -c 'map(.value) | join(",")')
+          echo "::set-output name=hostnames::${hostnames}"
+        id: tfoutput
+
+  test:
+    name: "Test"
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      # Checkout the repository to the GitHub Actions runner
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      # Run Pester based smoke test
+      - name: "Run smoke tests"
+        shell: pwsh
+        run: ./smokeTest.ps1 -HostNames ${{ needs.deploy.outputs.hostnames }}
+
+      # Publish JUnit Test Results
+      - name: Publish test results
+        if: success() || failure()
+        uses: dorny/test-reporter@v1.5.0
+        with:
+          name: Test results
+          path: "${{ env.WORKDIR }}/testResultsJunit.xml"
+          reporter: java-junit

@@ -1,0 +1,86 @@
+name: "PR - api-userprofile (Node)"
+
+# run on pr to main branch and manually
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "apis/userprofile/**"
+  workflow_dispatch:
+
+# Set envs
+env:
+  NODEJS_VERSION: "12"
+  WORKDIR: "apis/userprofile"
+
+# Set defaults for GitHub Actions runner
+defaults:
+  run:
+    working-directory: "apis/userprofile"
+
+jobs:
+  buildtest:
+    name: "Build and Test"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: "Setup Node.js ${{ env.NODEJS_VERSION }}"
+        uses: actions/setup-node@v2
+        with:
+          node-version: ${{ env.NODEJS_VERSION }}
+          cache: "npm"
+          cache-dependency-path: ${{ env.WORKDIR }}/package-lock.json
+      - run: npm ci
+
+      - name: "Run Tests"
+        run: npm run test
+
+      - name: "Publish Test Results"
+        uses: dorny/test-reporter@v1
+        if: success() || failure()
+        with:
+          name: Test results
+          path: "${{ env.WORKDIR }}/reports/userprofile-report.xml"
+          reporter: java-junit
+
+      - name: "Create an issue (bug)"
+        if: failure() && github.event_name != 'pull_request'
+        run: |
+          body='### Unit Test `failure`
+          <details>
+          <summary>Workflow details</summary>
+
+          Workflow name: `${{ github.workflow }}`
+          Action: `${{ github.event_name }}`
+          Job: `${{ github.job }}`
+          </details>
+
+          Test details: [Run #${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          Pusher: @${{ github.actor }}'
+
+          title='Unit Tests failure'
+          gh issue create --title "${title}" --body "${body}" --label bug --assignee ${{ github.actor }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: "Create a PR comment"
+        if: failure() && github.event_name == 'pull_request'
+        run: |
+          body='### Unit Test `failure`
+          <details>
+          <summary>Workflow details</summary>
+
+          Workflow name: `${{ github.workflow }}`
+          Action: `${{ github.event_name }}`
+          Job: `${{ github.job }}`
+          PR: #${{ github.event.number }}
+          </details>
+
+          Test details: [Run #${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          Pusher: @${{ github.actor }}'
+
+          gh pr comment ${{ github.event.number }} --body "${body}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

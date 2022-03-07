@@ -1,0 +1,115 @@
+name: "Deploy - Bicep"
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "iac/bicep/**"
+  workflow_dispatch:
+
+# Set envs
+env:
+  WORKDIR: "iac/bicep"
+
+# Set defaults for GitHub Actions runner
+defaults:
+  run:
+    working-directory: "iac/bicep"
+
+jobs:
+  preview:
+    name: "Preview Changes"
+    runs-on: ubuntu-latest
+    outputs:
+      resources-prefix: ${{ steps.inputdata.outputs.resources-prefix }}
+
+    steps:
+      # Checkout the repository to the GitHub Actions runner
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      # Generate RESOURCES_PREFIX based on the repo name
+      - name: "Get Resources Prefix"
+        run: |
+          RESOURCES_PREFIX=$(echo '${{ toJson(github.repository) }}' | jq -r -c 'split("/")[1]')
+
+          # Set for current Job
+          echo "RESOURCES_PREFIX=${RESOURCES_PREFIX}" >> $GITHUB_ENV
+
+          # Set for next Job
+          echo "::set-output name=resources-prefix::${RESOURCES_PREFIX}"
+        id: inputdata
+
+      # Login to Azure with Service Principal
+      - name: "Login to Azure"
+        uses: Azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      # Preview changes
+      - name: "Run what-if"
+        uses: Azure/cli@v1
+        with:
+          inlineScript: |
+            az deployment sub what-if \
+              --name ${{ github.run_id }} \
+              --template-file ${{ env.WORKDIR }}/main.bicep \
+              --location "${{ secrets.LOCATION }}" \
+              --parameters resourcesPrefix=${{ env.RESOURCES_PREFIX }}
+
+  deploy:
+    name: "Deploy"
+    needs: preview
+    runs-on: ubuntu-latest
+    environment: production
+    outputs:
+      hostnames: ${{ steps.deployment.outputs.hostnames }}
+
+    steps:
+      # Checkout the repository to the GitHub Actions runner
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      # Login to Azure with Service Principal
+      - name: "Azure Login"
+        uses: Azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      # Deploy
+      - name: "Run deployment"
+        uses: Azure/cli@v1
+        id: deployment
+        with:
+          inlineScript: |
+            deployment_output=$(az deployment sub create \
+              --name ${{ github.run_id }} \
+              --template-file ${{ env.WORKDIR }}/main.bicep \
+              --location "${{ secrets.LOCATION }}" \
+              --parameters resourcesPrefix=${{ needs.preview.outputs.resources-prefix }})
+            hostnames=$(echo "${deployment_output}" | jq -r -c '.properties.outputs | map(.value) | join(",")')
+            echo "::set-output name=hostnames::${hostnames}"
+
+  test:
+    name: "Test"
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      # Checkout the repository to the GitHub Actions runner
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      # Run Pester based smoke test
+      - name: "Run smoke tests"
+        shell: pwsh
+        run: ./smokeTest.ps1 -HostNames ${{ needs.deploy.outputs.hostnames }}
+
+      # Publish JUnit Test Results
+      - name: Publish test results
+        if: success() || failure()
+        uses: dorny/test-reporter@v1.5.0
+        with:
+          name: Test results
+          path: "${{ env.WORKDIR }}/testResultsJunit.xml"
+          reporter: java-junit

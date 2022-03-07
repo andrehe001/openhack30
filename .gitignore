@@ -1,0 +1,21 @@
+mdlint-config.json
+.vscode/
+**/*.DS_Store
+output/
+output.sh
+
+# Word temporary
+~$*.doc*
+~$*.tmp*
+
+# Excel temporary
+~$*.xls*
+
+# Excel Backup File
+*.xlk
+
+# PowerPoint temporary
+~$*.ppt*
+
+# Visio autosave temporary files
+*.~vsd*

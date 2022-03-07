@@ -1,0 +1,40 @@
+trigger:
+  - none
+# trigger and path filter are expected be configured in the ADO UI
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  - name: workDir
+    value: "$(System.DefaultWorkingDirectory)/iac/terraform"
+
+steps:
+  - task: TerraformInstaller@0
+    displayName: Install Terraform
+    inputs:
+      terraformVersion: "latest"
+
+  - task: TerraformCLI@0
+    displayName: Terraform Lint
+    inputs:
+      command: "fmt"
+      workingDirectory: "$(workDir)"
+      commandOptions: "-check -recursive"
+      allowTelemetryCollection: true
+
+  - task: TerraformCLI@0
+    displayName: Terraform Init
+    inputs:
+      command: "init"
+      commandOptions: "-backend=false"
+      workingDirectory: "$(workDir)"
+      backendType: "selfConfigured"
+      allowTelemetryCollection: true
+
+  - task: TerraformCLI@0
+    displayName: Terraform Validate
+    inputs:
+      command: "validate"
+      workingDirectory: "$(workDir)"
+      allowTelemetryCollection: true

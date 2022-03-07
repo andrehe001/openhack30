@@ -1,0 +1,8 @@
+---
+header-includes:
+- <script src="https://ajax.aspnetcdn.com/ajax/jQuery/jquery-3.6.0.min.js" crossorigin="anonymous"></script>
+- <link rel="stylesheet" href="https://ajax.aspnetcdn.com/ajax/bootstrap/3.4.1/css/bootstrap.min.css" crossorigin="anonymous">
+- <link rel="stylesheet" href="https://ajax.aspnetcdn.com/ajax/bootstrap/3.4.1/css/bootstrap-theme.min.css" crossorigin="anonymous">
+- <script src="https://ajax.aspnetcdn.com/ajax/bootstrap/3.4.1/bootstrap.min.js" crossorigin="anonymous"></script>
+- <link rel="stylesheet" href="https://opsgilitylabs.blob.core.windows.net/lablayout/labstyles.css" crossorigin="anonymous"></link>
+---

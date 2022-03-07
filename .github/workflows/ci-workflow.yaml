@@ -1,0 +1,140 @@
+name: devops-ci-workflow
+
+# Runs on open PR to main, lints md and json, creates copy of guides and pushes to storage.
+
+on:
+  pull_request:
+    branches: [main]
+env:
+  ARCHIVE_FOLDER: openhack-assets/archives/stagingbuilds/microsoft-open-hack-devops
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - uses: actions/checkout@v2
+
+      - name: "Setup Node"
+        uses: actions/setup-node@v2
+        with:
+          node-version: 12.x
+
+      # Lint your open-hack guides
+      - name: "Linting OpenHack Content"
+        uses: nosborn/github-action-markdown-cli@v3
+        with:
+          # configuration file (JSON or YAML)
+          config_file: .markdownlint.json
+          # files, directories, or globs
+          files: ./portal
+
+      # Lint any additional guides you have (any *.md files).  Remove if not needed.
+      - name: "Linting Resources"
+        uses: nosborn/github-action-markdown-cli@v3
+        with:
+          # configuration file (JSON or YAML)
+          config_file: .markdownlint.json
+          # files, directories, or globs
+          files: ./resources
+          # ignore_files: "resources/SupportingFiles/react-rating-ui-ts/*"
+
+      # Lint your JSON files [mostly for content def]
+      - name: "Install dependencies"
+        run: npm install jsonlint -g
+
+      # Make sure to lint any language-specific versions you've created(remove unnecessary/non-existent paths)
+      - name: "Execute json linter lab-content-definitions"
+        run: |
+          jsonlint ./portal/en/lab-content-definition.json
+
+      # Install PanDoc
+      - name: Install Pandoc
+        run: sudo apt-get install pandoc
+
+      # Setup the output archive environment [You will need to map all of your output folders, remove any that don't make sense]
+      # Additionally: Don't forget to set chmod -R 755 on the new folders
+      - name: Setup Build Environment
+        run: |
+          mkdir output  # create output dir
+          sudo chmod -R 755 output
+          mkdir output/portal
+          sudo chmod -R 755 output/portal
+          mkdir output/portal/en
+          sudo chmod -R 755 output/portal/en
+          mkdir output/portal/en/images
+          sudo chmod -R 755 output/portal/en/images
+          mkdir output/resources
+          sudo chmod -R 755 output/resources
+
+      # Create HTML files from your markdown.  Map all language-specific versions, remove any that aren't existent.
+      - name: "Create EN files"
+        run: |
+          FILE_LIST_EN=$(printf '%s;' ./portal/en/*.md)
+          #echo ${FILE_LIST_EN}
+          IFS=';' read -ra ENFILES <<< ${FILE_LIST_EN}
+          for f in ${ENFILES[@]}; 
+          do 
+            HTML_FULL_PATH=`basename ${f}`
+            #echo ${HTML_FULL_PATH}
+            NEW_FILE=${HTML_FULL_PATH/md/html}
+            #echo ${NEW_FILE}
+            pandoc --from markdown+raw_html --to html5 ./portal/includes.yaml --metadata pagetitle="OPEN HACK GUIDE" --no-highlight --output=output/portal/en/${NEW_FILE} ${f}
+            cp ${f} output/portal/en/
+          done
+
+      #Copy Content Definitions to output artifact (again, map all specific languages, remove any non-existent)
+      - name: "Copy Lab content Definitions"
+        run: |
+          cp ./portal/en/lab-content-definition.json output/portal/en
+
+      #Copy images to output artifact (again, map all specific languages, remove any non-existent)
+      - name: "Copy Images"
+        run: |
+          cp ./portal/en/images/* output/portal/en/images
+
+      #Copy resources (again, map any additional folders you want to archive, remove if not necessary).  This/these folder(s) is/are never actually deployed, just archived.
+      - name: "Copy Resources"
+        run: |
+          cp -r ./resources/* output/resources
+
+      #Create Archive
+      - name: "create archive"
+        uses: actions/upload-artifact@main
+        with:
+          name: output
+          path: output
+
+      - name: Get current time
+        uses: srfrnk/current-time@master
+        id: current-time
+        with:
+          format: YYYYMMDD
+
+      # Archive Deploy to storage [this is simply for backup and is placed into non-production storage]
+      - name: "Deploy Assets staging builds archive"
+        env:
+          F_TIME: "${{ steps.current-time.outputs.formattedTime }}"
+        run: |
+          STORAGEARCHIVE="https://${{ secrets.STORAGE_ACCOUNT_NAME }}.blob.core.windows.net/${{ env.ARCHIVE_FOLDER }}/$F_TIME${{ secrets.STORAGE_ACCOUNT_SAS_TOKEN }}"
+
+          #Download and install azcopy 
+          pwd 
+          wget -O azcopy.tar.gz https://aka.ms/downloadazcopy-v10-linux
+          tar -xf azcopy.tar.gz
+          rm azcopy.tar.gz
+
+          #copy files
+          azcopy copy output $STORAGEARCHIVE --recursive
+
+          echo "Content copied to Azure blob storage"
+          echo $STORAGEARCHIVE
+
+      # Delete Archive [the archive is never stored at GitHub, saving compute space at GitHub]
+      # Note: If you want to test your output, temporarily remove this step and review the output at GitHub [make sure to put the step back when you are ready to release]
+      - name: Delete Output
+        uses: geekyeggo/delete-artifact@v1
+        with:
+          name: output

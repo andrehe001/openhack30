@@ -1,0 +1,94 @@
+name: "PR - api-poi (.NET Core) v2 - Gitleaks"
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "apis/poi/**"
+  workflow_dispatch:
+
+# Set envs
+env:
+  DOTNET_VERSION: "3.1.x"
+
+jobs:
+  buildtest:
+    name: "Build and Test"
+    runs-on: ubuntu-latest
+    outputs:
+      test_results: ${{ steps.unittestoutput.outputs.test_results }}
+      test_outcome: ${{ steps.unittestoutput.outputs.test_outcome }}
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: '0'
+
+      - name: "Check for secrets with Gitleaks"
+        id: gitleaks
+        uses: DariuszPorowski/github-action-gitleaks@v2
+        with:
+          source: apis/poi
+          config: gitleaksconfig.toml
+          report_format: "sarif"
+          fail: false
+
+      # Official Action for Gitleaks which has less configuration options
+      # - name: "Check for secrets with Gitleaks"
+      #   id: gitleaks2
+      #   uses: zricethezav/gitleaks-action@master
+      #   with:
+      #     config-path: "gitleaksconfig.toml"
+
+      - name: "Output from the gitleaks step"
+        run: |
+          echo "exitcode: ${{ steps.gitleaks.outputs.exitcode }}"
+          echo "result: ${{ steps.gitleaks.outputs.result }}"
+          echo "output: ${{ steps.gitleaks.outputs.output }}"
+          echo "command: ${{ steps.gitleaks.outputs.command }}"
+          echo "report: ${{ steps.gitleaks.outputs.report }}"
+
+      # SARIF upload for repositories with GitHub Advanced Security
+      - name: "Upload SARIF report"
+        if: steps.gitleaks.outputs.exitcode == 1
+        uses: github/codeql-action/upload-sarif@v1
+        with:
+          sarif_file: ${{ steps.gitleaks.outputs.report }}
+
+      - name: "Stop workflow if secrets detected"
+        if: steps.gitleaks.outputs.exitcode == 1
+        run: exit 1
+
+      - name: "Setup .NET Core ${{ env.DOTNET_VERSION }}"
+        uses: actions/setup-dotnet@v1
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: "Restore dependencies"
+        working-directory: apis/poi
+        run: dotnet restore
+
+      - name: "Build the App"
+        working-directory: apis/poi
+        run: dotnet build --no-restore
+
+      - name: "Run Unit Tests"
+        id: unittest
+        working-directory: apis/poi
+        run: |
+          dotnet test --no-build --filter "FullyQualifiedName~UnitTest" |& tee test_results.txt
+
+          # break if 'dotnet test' failed
+          test ${PIPESTATUS[0]} -eq 0
+        continue-on-error: true
+
+      - name: "Transform Unit Tests output"
+        id: unittestoutput
+        if: steps.unittest.outcome == 'failure'
+        run: |
+          test_results=$(cat test_results.txt)
+          test_results="${test_results//'%'/'%25'}"
+          test_results="${test_results//$'\n'/'%0A'}"
+          test_results="${test_results//$'\r'/'%0D'}"
+          echo "::set-output name=test_results::${test_results}"
+          echo "::set-output name=test_outcome::${{ steps.unittest.outcome }}"

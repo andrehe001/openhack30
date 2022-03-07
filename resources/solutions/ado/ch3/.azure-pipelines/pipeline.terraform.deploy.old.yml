@@ -1,0 +1,123 @@
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - iac/terraform
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  - group: openhack
+  - group: tfstate
+  - name: ServiceConnectionName
+    value: AzureServiceConnection
+  - name: workDir
+    value: "$(System.DefaultWorkingDirectory)/iac/terraform"
+stages:
+  - stage: Preview
+    jobs:
+      - job: PreviewChanges
+        displayName: Preview infrastructure changes
+        steps:
+          - task: TerraformInstaller@0
+            displayName: Install Terraform
+            inputs:
+              terraformVersion: "latest"
+          - task: TerraformCLI@0
+            displayName: Run Terraform Init
+            inputs:
+              command: "init"
+              workingDirectory: "$(workDir)"
+              backendType: "azurerm"
+              backendServiceArm: "$(ServiceConnectionName)"
+              backendAzureRmResourceGroupName: "$(TFSTATE_RESOURCES_GROUP_NAME)"
+              backendAzureRmStorageAccountName: "$(TFSTATE_STORAGE_ACCOUNT_NAME)"
+              backendAzureRmContainerName: "$(TFSTATE_STORAGE_CONTAINER_NAME)"
+              backendAzureRmKey: "$(TFSTATE_KEY)"
+              allowTelemetryCollection: true
+          - task: TerraformCLI@0
+            displayName: Run Terraform Plan
+            inputs:
+              command: "plan"
+              workingDirectory: "$(workDir)"
+              environmentServiceName: "$(ServiceConnectionName)"
+              commandOptions: '-detailed-exitcode -var="location=$(LOCATION)" -var="resources_prefix=$(RESOURCES_PREFIX)"'
+              publishPlanResults: "tfplan"
+              allowTelemetryCollection: true
+          - script: |
+              echo "##vso[task.setvariable variable=TERRAFORM_PLAN_HAS_CHANGES;isOutput=true]$TERRAFORM_PLAN_HAS_CHANGES"
+              echo "##vso[task.setvariable variable=TERRAFORM_PLAN_HAS_DESTROY_CHANGES;isOutput=true]$TERRAFORM_PLAN_HAS_DESTROY_CHANGES"
+            name: "PlanStatus"
+            displayName: "Set Variables with Terraform Plan Exit Codes for next stage"
+
+  - stage: Deploy
+    dependsOn:
+      - "Preview"
+    condition: and(succeeded(), eq(dependencies.Preview.outputs['PreviewChanges.PlanStatus.TERRAFORM_PLAN_HAS_CHANGES'], 'true'))
+    jobs:
+      - deployment: DeployInfra
+        displayName: Deploy infrastructure
+        environment: production
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                - task: TerraformInstaller@0
+                  displayName: Install Terraform
+                  inputs:
+                    terraformVersion: "latest"
+                - task: TerraformCLI@0
+                  displayName: Run Terraform Init
+                  inputs:
+                    command: "init"
+                    workingDirectory: "$(workDir)"
+                    backendType: "azurerm"
+                    backendServiceArm: "$(ServiceConnectionName)"
+                    backendAzureRmResourceGroupName: "$(TFSTATE_RESOURCES_GROUP_NAME)"
+                    backendAzureRmStorageAccountName: "$(TFSTATE_STORAGE_ACCOUNT_NAME)"
+                    backendAzureRmContainerName: "$(TFSTATE_STORAGE_CONTAINER_NAME)"
+                    backendAzureRmKey: "$(TFSTATE_KEY)"
+                    allowTelemetryCollection: true
+                - task: TerraformCLI@0
+                  displayName: Run Terraform Apply
+                  inputs:
+                    command: "apply"
+                    workingDirectory: "$(workDir)"
+                    environmentServiceName: "$(ServiceConnectionName)"
+                    runAzLogin: true
+                    commandOptions: '-var="location=$(LOCATION)" -var="resources_prefix=$(RESOURCES_PREFIX)"'
+                    allowTelemetryCollection: true
+                - script: |
+                    deployment_output=$(terraform output -json)
+                    hostnames=$(echo "${deployment_output}" | jq -r -c 'map(.value) | join(",")')
+                    echo "##vso[task.setvariable variable=hostnames;isOutput=true]$hostnames"
+                  workingDirectory: "$(workDir)"
+                  name: DeployOutput
+
+  - stage: Test
+    jobs:
+      - job: SmokeTest
+        displayName: Smoke test
+        variables:
+          hostnames: $[ stageDependencies.Deploy.DeployInfra.outputs['DeployInfra.DeployOutput.hostnames'] ]
+        steps:
+          - task: PowerShell@2
+            name: RunSmokeTests
+            displayName: Run smoke tests
+            inputs:
+              filePath: "$(workDir)/smokeTest.ps1"
+              arguments: "-HostNames $(hostnames)"
+              pwsh: true
+              workingDirectory: $(workDir)
+          - task: PublishTestResults@2
+            displayName: Publish Test Results
+            condition: succeededOrFailed()
+            inputs:
+              testResultsFormat: "NUnit"
+              testResultsFiles: "testResults.xml"
+              searchFolder: $(workDir)
+              mergeTestResults: true

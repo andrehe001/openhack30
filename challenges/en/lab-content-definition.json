@@ -1,0 +1,86 @@
+{
+  "Title": "DevOps OpenHack - Secure Zero Downtime Deployments",
+  "Description": "OpenHack challenges for performing Secure Zero Downtime Deployments",
+  "OverviewUrl": "README.html",
+  "ContentVersion": "3.0",
+  "ContentPackage": {
+    "ContentItems": [
+      {
+        "Order": 0,
+        "Title": "Challenge 0: Bring Your Own Subscription (BYOS)",
+        "Description": "Bring Your Own Subscription (BYOS)",
+        "Url": "Challenge-00.html"
+      },
+      {
+        "Order": 1,
+        "Follows": 0,
+        "Title": "Challenge 1: Establish your plan",
+        "Description": "Establish your plan",
+        "Url": "Challenge-01.html"
+      },
+      {
+        "Order": 2,
+        "Follows": 1,
+        "Title": "Challenge 2: Setting up development workflow",
+        "Description": "Setting up development workflow",
+        "Url": "Challenge-02.html"
+      },
+      {
+        "Order": 3,
+        "Follows": 2,
+        "Title": "Challenge 3: Deploy Cloud Infrastructure with Infrastructure as Code",
+        "Description": "Deploy Cloud Infrastructure with Infrastructure as Code",
+        "Url": "Challenge-03.html"
+      },
+      {
+        "Order": 4,
+        "Follows": 3,
+        "Title": "Challenge 4: Implement Continuous Integration (CI) with Testing",
+        "Description": "Implement Continuous Integration (CI) with Testing",
+        "Url": "Challenge-04.html"
+      },
+      {
+        "Order": 5,
+        "Follows": 4,
+        "Title": "Challenge 5: Implement Continuous Deployment (CD)",
+        "Description": "Implement Continuous Deployment (CD)",
+        "Url": "Challenge-05.html"
+      },
+      {
+        "Order": 6,
+        "Follows": 5,
+        "Title": "Challenge 6: Implement a Blue/Green deployment strategy",
+        "Description": "Implement a Blue/Green deployment strategy",
+        "Url": "Challenge-06.html"
+      },
+      {
+        "Order": 7,
+        "Follows": 6,
+        "Title": "Challenge 7: DevSecOps basics - get rid of secrets",
+        "Description": "DevSecOps basics - get rid of secrets",
+        "Url": "Challenge-07.html"
+      },
+      {
+        "Order": 8,
+        "Follows": 7,
+        "Title": "Challenge 8: Integrating quality and security checks",
+        "Description": "Integrating quality and security checks",
+        "Url": "Challenge-08.html"
+      },
+      {
+        "Order": 9,
+        "Follows": 7,
+        "Title": "Challenge 9: Implement a Load Testing & Monitoring solution with alerting",
+        "Description": "Implement a Load Testing & Monitoring solution with alerting",
+        "Url": "Challenge-09.html"
+      },
+      {
+        "Order": 10,
+        "Follows": 7,
+        "Title": "Challenge 10: Implement phased rollout with rollback",
+        "Description": "Implement phased rollout with rollback",
+        "Url": "Challenge-10.html"
+      }
+    ]
+  }
+}

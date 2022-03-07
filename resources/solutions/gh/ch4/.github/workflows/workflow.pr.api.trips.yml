@@ -1,0 +1,94 @@
+name: "PR - api-trips (GoLang)"
+
+# run on pr to main branch and manually
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "apis/trips/**"
+  workflow_dispatch:
+
+# Set envs
+env:
+  GOLANG_VERSION: "1.16"
+  WORKDIR: "apis/trips"
+
+# Set defaults for GitHub Actions runner
+defaults:
+  run:
+    working-directory: "apis/trips"
+
+jobs:
+  buildtest:
+    name: "Build and Test"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: "Setup Go ${{ env.GOLANG_VERSION }}"
+        uses: actions/setup-go@v2
+        with:
+          go-version: ${{ env.GOLANG_VERSION }}
+
+      - name: "Get dependencies"
+        run: go get
+
+      - name: "Build the app"
+        run: go build
+
+      - name: "Setup gotestsum"
+        run: |
+          chmod +x install_gotestsum.sh
+          ./install_gotestsum.sh
+
+      - name: "Run Unit Tests"
+        run: ./gotestsum --format standard-verbose --junitfile unittest_results.xml -- ./tripsgo -run Unit -coverprofile=unittest_coverage.out -covermode=count
+
+      - name: "Publish test results"
+        if: success() || failure()
+        uses: dorny/test-reporter@v1
+        with:
+          name: Test results
+          path: "${{ env.WORKDIR }}/unittest_results.xml"
+          reporter: java-junit
+
+      - name: "Create an issue (bug)"
+        if: failure() && github.event_name != 'pull_request'
+        run: |
+          body='### Unit Test `failure`
+          <details>
+          <summary>Workflow details</summary>
+
+          Workflow name: `${{ github.workflow }}`
+          Action: `${{ github.event_name }}`
+          Job: `${{ github.job }}`
+          </details>
+
+          Test details: [Run #${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          Pusher: @${{ github.actor }}'
+
+          title='Unit Tests failure'
+          gh issue create --title "${title}" --body "${body}" --label bug --assignee ${{ github.actor }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: "Create a PR comment"
+        if: failure() && github.event_name == 'pull_request'
+        run: |
+          body='### Unit Test `failure`
+          <details>
+          <summary>Workflow details</summary>
+
+          Workflow name: `${{ github.workflow }}`
+          Action: `${{ github.event_name }}`
+          Job: `${{ github.job }}`
+          PR: #${{ github.event.number }}
+          </details>
+
+          Test details: [Run #${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          Pusher: @${{ github.actor }}'
+
+          gh pr comment ${{ github.event.number }} --body "${body}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

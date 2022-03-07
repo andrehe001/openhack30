@@ -1,0 +1,89 @@
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - iac/bicep
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  - group: openhack
+  - name: ServiceConnectionName
+    value: AzureServiceConnection
+  - name: workDir
+    value: "$(System.DefaultWorkingDirectory)/iac/bicep"
+stages:
+  - stage: Preview
+    jobs:
+      - job: PreviewChanges
+        displayName: Preview infrastructure changes
+        steps:
+          - task: AzureCLI@2
+            name: RunWhatIf
+            displayName: Run what-if
+            inputs:
+              azureSubscription: $(ServiceConnectionName)
+              scriptType: "bash"
+              scriptLocation: "inlineScript"
+              inlineScript: |
+                az deployment sub what-if \
+                  --name $(Build.BuildId) \
+                  --template-file main.bicep \
+                  --location $(LOCATION) \
+                  --parameters resourcesPrefix=$(RESOURCES_PREFIX)
+              workingDirectory: $(workDir)
+
+  - stage: Deploy
+    jobs:
+      - deployment: DeployInfra
+        displayName: Deploy infrastructure
+        environment: production
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                - task: AzureCLI@2
+                  name: Deployment
+                  displayName: Run deployment
+                  inputs:
+                    azureSubscription: $(ServiceConnectionName)
+                    scriptType: "bash"
+                    scriptLocation: "inlineScript"
+                    inlineScript: |
+                      deployment_output=$(az deployment sub create \
+                        --name $(Build.BuildId) \
+                        --template-file main.bicep \
+                        --location $(LOCATION) \
+                        --parameters resourcesPrefix=$(RESOURCES_PREFIX))
+
+                      hostnames=$(echo $deployment_output | jq -r -c '.properties.outputs | map(.value) | join(",")')
+                      echo "##vso[task.setvariable variable=hostnames;isOutput=true]$hostnames"
+                    workingDirectory: $(workDir)
+
+  - stage: Test
+    jobs:
+      - job: SmokeTest
+        displayName: Smoke test
+        variables:
+          hostnames: $[ stageDependencies.Deploy.DeployInfra.outputs['DeployInfra.Deployment.hostnames'] ]
+        steps:
+          - task: PowerShell@2
+            name: RunSmokeTests
+            displayName: Run smoke tests
+            inputs:
+              filePath: "$(workDir)/smokeTest.ps1"
+              arguments: "-HostNames $(hostnames)"
+              pwsh: true
+              workingDirectory: $(workDir)
+          - task: PublishTestResults@2
+            displayName: Publish Test Results
+            condition: succeededOrFailed()
+            inputs:
+              testResultsFormat: "NUnit"
+              testResultsFiles: "testResults.xml"
+              searchFolder: $(workDir)
+              mergeTestResults: true

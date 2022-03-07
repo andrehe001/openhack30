@@ -1,0 +1,86 @@
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - apis/poi
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  - group: openhack
+  - name: AzureServiceConnectionName
+    value: AzureServiceConnection
+  - name: ContainerRegistryServiceConnectionName
+    value: AzureContainerRegistry
+  - name: WORKDIR
+    value: "$(Build.SourcesDirectory)/apis/poi/web"
+  - name: DOCKER_IMAGE_BASE_NAME
+    value: "devopsoh/api-poi"
+  - name: API_NAME
+    value: "poi"
+
+stages:
+  - stage: Build
+    displayName: Build
+    jobs:
+      - job: Build
+        displayName: Build
+        steps:
+          - checkout: self
+
+          - task: Docker@2
+            displayName: Build an image
+            inputs:
+              containerRegistry: $(ContainerRegistryServiceConnectionName)
+              repository: $(DOCKER_IMAGE_BASE_NAME)
+              command: "build"
+              Dockerfile: "$(WORKDIR)/Dockerfile"
+              buildContext: "$(WORKDIR)"
+              arguments: "--build-arg build_version=$(Build.BuildId)"
+              tags: $(Build.BuildId)
+
+          - task: Docker@2
+            displayName: Push an image
+            inputs:
+              containerRegistry: $(ContainerRegistryServiceConnectionName)
+              repository: $(DOCKER_IMAGE_BASE_NAME)
+              command: "push"
+              tags: $(Build.BuildId)
+
+  - stage: Production
+    displayName: "Production"
+    jobs:
+      - deployment: Production
+        displayName: Production
+        environment: poi-production
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: AzureRmWebAppDeployment@4
+                  inputs:
+                    ConnectionType: "AzureRM"
+                    azureSubscription: $(AzureServiceConnectionName)
+                    appType: webAppContainer
+                    WebAppName: "$(RESOURCES_PREFIX)$(API_NAME)"
+                    ResourceGroupName: "$(RESOURCES_PREFIX)rg"
+                    DockerNamespace: "$(RESOURCES_PREFIX)cr.azurecr.io"
+                    DockerRepository: $(DOCKER_IMAGE_BASE_NAME)
+                    DockerImageTag: $(Build.BuildId)
+
+                - task: AzureAppServiceManage@0
+                  inputs:
+                    azureSubscription: $(AzureServiceConnectionName)
+                    Action: "Stop Azure App Service"
+                    WebAppName: "$(RESOURCES_PREFIX)$(API_NAME)"
+                    ResourceGroupName: "$(RESOURCES_PREFIX)rg"
+
+                - task: AzureAppServiceManage@0
+                  inputs:
+                    azureSubscription: $(AzureServiceConnectionName)
+                    Action: "Start Azure App Service"
+                    WebAppName: "$(RESOURCES_PREFIX)$(API_NAME)"
+                    ResourceGroupName: "$(RESOURCES_PREFIX)rg"
